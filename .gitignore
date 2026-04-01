@@ -1,0 +1,65 @@
+# ----------------------------------------------------------------------
+# System / OS
+# ----------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----------------------------------------------------------------------
+# Node / NPM / Dependencies (matches root, client/, and server/)
+# ----------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.npm/
+
+# ----------------------------------------------------------------------
+# Environment Variables & Secrets
+# ----------------------------------------------------------------------
+# Ignore all .env files to prevent leaking your MongoDB URI and JWT secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# ----------------------------------------------------------------------
+# Build Outputs / Frontend (React / Vite)
+# ----------------------------------------------------------------------
+dist/
+dist-ssr/
+build/
+out/
+.tsbuildinfo
+
+# ----------------------------------------------------------------------
+# Logs & Testing
+# ----------------------------------------------------------------------
+logs/
+*.log
+coverage/
+.nyc_output/
+
+# ----------------------------------------------------------------------
+# Editor and IDE configurations
+# ----------------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ----------------------------------------------------------------------
+# Local Uploads / Media (For when you implement file/image uploads)
+# ----------------------------------------------------------------------
+uploads/
+server/uploads/
+client/public/uploads/
