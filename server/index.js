@@ -4,6 +4,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import authRoutes from './routes/authRoutes.js';
 import jobRoutes from './routes/jobRoutes.js';
+import networkRoutes from './routes/networkRoutes.js';
 import postRoutes from './routes/postRoutes.js';
 import profileRoutes from './routes/profileRoutes.js';
 
@@ -20,6 +21,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api/posts', postRoutes);
+app.use('/api/network', networkRoutes);
 
 // Database Connection
 mongoose.connect(process.env.MONGO_URI)

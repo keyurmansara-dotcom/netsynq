@@ -27,7 +27,19 @@ const userSchema = new mongoose.Schema({
     location: String,
     resumeUrl: String, 
     companyName: String 
-  }
+  },
+  connections: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  connectionRequests: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  sentRequests: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }]
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
