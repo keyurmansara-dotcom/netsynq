@@ -24,12 +24,15 @@ export const updateProfile = async (req, res) => {
 
     user.name = req.body.name || user.name;
     user.email = req.body.email || user.email;
+    const currentProfile = user.profile || {};
     
     user.profile = {
-      headline: req.body.headline || user.profile.headline,
-      location: req.body.location || user.profile.location,
-      resumeUrl: req.body.resumeUrl || user.profile.resumeUrl,
-      companyName: req.body.companyName || user.profile.companyName,
+      headline: req.body.headline || currentProfile.headline || '',
+      location: req.body.location || currentProfile.location || '',
+      resumeUrl: Object.prototype.hasOwnProperty.call(req.body, 'resumeUrl')
+        ? (req.body.resumeUrl || '')
+        : (currentProfile.resumeUrl || ''),
+      companyName: req.body.companyName || currentProfile.companyName || '',
     };
 
     const updatedUser = await user.save();

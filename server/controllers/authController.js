@@ -1,10 +1,10 @@
-import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
 
 export const signup = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, companyName, headline } = req.body;
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -16,12 +16,19 @@ export const signup = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Create profile defaults based on role
+    const profile = {
+      headline: role === 'seeker' ? headline : '',
+      companyName: role === 'recruiter' ? companyName : ''
+    };
+
     // Create new user
     const newUser = new User({
       name,
       email,
       password: hashedPassword,
-      role
+      role,
+      profile
     });
     await newUser.save();
 
@@ -58,7 +65,8 @@ export const login = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        profile: user.profile || {}
       }
     });
   } catch (error) {

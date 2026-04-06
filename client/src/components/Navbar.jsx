@@ -1,6 +1,41 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 const Navbar = ({ user, onLogout }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    setSearchTerm(params.get('q') || '');
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchNotifications = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const res = await fetch('http://localhost:5000/api/notifications', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const unread = data.filter(n => !n.read).length;
+          setUnreadCount(unread);
+        }
+      } catch (err) {
+        console.error('Failed to fetch notifications', err);
+      }
+    };
+    fetchNotifications();
+    // Optional: poll every 30 seconds
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   return (
     <nav className="bg-white sticky top-0 z-50 border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14">
@@ -12,16 +47,25 @@ const Navbar = ({ user, onLogout }) => {
             </div>
             {/* Search Bar */}
             <div className="hidden sm:ml-4 sm:flex sm:items-center">
-              <div className="relative relative w-64">
+              <form 
+                className="relative w-64"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const query = searchTerm.trim();
+                  navigate(query ? `/jobs?q=${encodeURIComponent(query)}` : '/jobs');
+                }}
+              >
                 <input
                   type="text"
-                  placeholder="Search"
+                  placeholder="Search jobs"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
                   className="bg-[#EDF3F8] text-sm rounded-md pl-10 pr-4 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"
                 />
                 <svg className="w-4 h-4 text-gray-500 absolute left-3 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                 </svg>
-              </div>
+              </form>
             </div>
           </div>
 
@@ -61,9 +105,16 @@ const Navbar = ({ user, onLogout }) => {
 
             <NavLink 
                to="/notifications"
-               className={({ isActive }) => `flex flex-col items-center justify-center cursor-pointer min-w-[64px] h-full sm:px-2 px-1 ${isActive ? 'text-gray-900 border-b-2 border-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+               className={({ isActive }) => `flex flex-col items-center justify-center cursor-pointer min-w-[64px] h-full sm:px-2 px-1 relative ${isActive ? 'text-gray-900 border-b-2 border-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
             >
-               <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M22 19h-8.28a2 2 0 11-3.44 0H2v-1.5l2-2V9a8 8 0 0116 0v6.5l2 2z"></path></svg>
+               <div className="relative">
+                 <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M22 19h-8.28a2 2 0 11-3.44 0H2v-1.5l2-2V9a8 8 0 0116 0v6.5l2 2z"></path></svg>
+                 {unreadCount > 0 && (
+                   <span className="absolute -top-1 -right-2 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                     {unreadCount > 99 ? '99+' : unreadCount}
+                   </span>
+                 )}
+               </div>
                <span className="text-xs hidden sm:block mt-1 font-normal">Notifications</span>
             </NavLink>
 
@@ -77,7 +128,7 @@ const Navbar = ({ user, onLogout }) => {
               
               {/* Dropdown Menu */}
               <div className="hidden group-hover:block absolute top-[52px] right-0 w-48 bg-white border border-gray-200 rounded-md shadow-lg py-2 z-50">
-                <div className="block px-4 py-2 text-sm text-gray-700 font-bold border-b pb-3">{user?.name}</div>
+                <NavLink to="/profile" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">View Profile</NavLink>
                 <button onClick={onLogout} className="w-full text-left block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign Out</button>
               </div>
             </div>

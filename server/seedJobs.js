@@ -1,3 +1,4 @@
+import { faker } from '@faker-js/faker';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import Job from './models/Job.js';
@@ -6,112 +7,26 @@ import User from './models/User.js';
 // Load environment variables
 dotenv.config();
 
-const sampleJobs = [
-  {
-    title: "Senior Frontend Developer",
-    company: "Google",
-    location: "Remote",
-    description: "We are looking for an experienced React developer to build modern web interfaces.",
-    skillsRequired: ["React", "JavaScript", "Tailwind CSS"],
-    type: "Remote"
-  },
-  {
-    title: "Backend Node.js Engineer",
-    company: "Amazon",
-    location: "New York, NY",
-    description: "Join our core infrastructure team to build scalable microservices.",
-    skillsRequired: ["Node.js", "Express", "MongoDB"],
-    type: "Full-time"
-  },
-  {
-    title: "Full Stack Developer",
-    company: "Microsoft",
-    location: "Seattle, WA",
-    description: "Work on end-to-end features spanning React frontend and Node.js backend.",
-    skillsRequired: ["React", "Node.js", "TypeScript"],
-    type: "Full-time"
-  },
-  {
-    title: "UI/UX Designer",
-    company: "Apple",
-    location: "San Francisco, CA",
-    description: "Design intuitive and beautiful user experiences for our next-gen products.",
-    skillsRequired: ["Figma", "Prototyping", "CSS"],
-    type: "Contract"
-  },
-  {
-    title: "DevOps Engineer",
-    company: "Netflix",
-    location: "Remote",
-    description: "Automate CI/CD pipelines and manage cloud infrastructure on AWS.",
-    skillsRequired: ["Docker", "Kubernetes", "AWS"],
-    type: "Remote"
-  },
-  {
-    title: "Data Scientist",
-    company: "Meta",
-    location: "Los Angeles, CA",
-    description: "Analyze large datasets to derive actionable business insights.",
-    skillsRequired: ["Python", "SQL", "Machine Learning"],
-    type: "Full-time"
-  },
-  {
-    title: "Junior React Developer",
-    company: "Spotify",
-    location: "Austin, TX",
-    description: "Great opportunity for a junior developer to learn and grow in a fast-paced environment.",
-    skillsRequired: ["React", "HTML", "CSS"],
-    type: "Full-time"
-  },
-  {
-    title: "Mobile App Developer",
-    company: "Uber",
-    location: "Remote",
-    description: "Build cross-platform mobile applications using React Native.",
-    skillsRequired: ["React Native", "iOS", "Android"],
-    type: "Remote"
-  },
-  {
-    title: "Cybersecurity Analyst",
-    company: "Tesla",
-    location: "Chicago, IL",
-    description: "Ensure the security of our internal networks and customer data.",
-    skillsRequired: ["Network Security", "Penetration Testing"],
-    type: "Full-time"
-  },
-  {
-    title: "Product Manager",
-    company: "Airbnb",
-    location: "Denver, CO",
-    description: "Lead cross-functional teams to deliver high-impact product features.",
-    skillsRequired: ["Agile", "Scrum", "Product Strategy"],
-    type: "Full-time"
-  },
-  {
-    title: "Cloud Architect",
-    company: "Oracle",
-    location: "Remote",
-    description: "Design and implement robust cloud solutions for enterprise clients.",
-    skillsRequired: ["Azure", "AWS", "Terraform"],
-    type: "Remote"
-  },
-  {
-    title: "Part-time Web Developer",
-    company: "Local Startup",
-    location: "Boston, MA",
-    description: "Help us build our landing page and early prototype part-time.",
-    skillsRequired: ["HTML", "CSS", "JavaScript"],
-    type: "Part-time"
-  },
-  {
-    title: "AI/ML Engineer",
-    company: "OpenAI",
-    location: "San Francisco, CA",
-    description: "Push the boundaries of artificial intelligence and deep learning models.",
-    skillsRequired: ["Python", "PyTorch", "TensorFlow"],
-    type: "Full-time"
-  }
+const JOB_TYPES = ['Full-time', 'Part-time'];
+const SKILLS_POOL = [
+  'React', 'Node.js', 'Express', 'MongoDB', 'TypeScript', 'JavaScript',
+  'Python', 'SQL', 'Docker', 'Kubernetes', 'AWS', 'Azure', 'Tailwind CSS',
+  'GraphQL', 'Redis', 'Next.js', 'PostgreSQL', 'CI/CD', 'REST APIs', 'Git'
 ];
+
+const generateSampleJobs = (count = 15) => {
+  return Array.from({ length: count }, () => ({
+    title: faker.person.jobTitle(),
+    company: faker.company.name(),
+    location: `${faker.location.city()}, ${faker.location.state({ abbreviated: true })}`,
+    description: faker.lorem.paragraph(),
+    skillsRequired: faker.helpers.arrayElements(
+      SKILLS_POOL,
+      faker.number.int({ min: 3, max: 6 })
+    ),
+    type: faker.helpers.arrayElement(JOB_TYPES)
+  }));
+};
 
 const seedDB = async () => {
   try {
@@ -131,6 +46,8 @@ const seedDB = async () => {
       });
     }
 
+    const sampleJobs = generateSampleJobs(15);
+
     // Attach the recruiter ID to all sample jobs
     const jobsToInsert = sampleJobs.map(job => ({ ...job, recruiter: user._id }));
 
@@ -138,7 +55,7 @@ const seedDB = async () => {
     // await Job.deleteMany({}); 
 
     await Job.insertMany(jobsToInsert);
-    console.log('✅ 13 Sample Jobs inserted successfully!');
+    console.log(`✅ ${jobsToInsert.length} sample jobs inserted successfully!`);
     
     process.exit(0);
   } catch (error) {

@@ -7,6 +7,8 @@ export const getNetworkData = async (req, res) => {
     const currentUser = await User.findById(currentUserId)
       .populate('connectionRequests', 'name profile.headline email _id')
       .populate('connections', 'name profile.headline email _id')
+      .populate('followers', 'name profile.headline email _id')
+      .populate('following', 'name profile.headline email _id')
       .populate('sentRequests', '_id');
       
     if (!currentUser) return res.status(404).json({ message: 'User not found' });
@@ -25,6 +27,8 @@ export const getNetworkData = async (req, res) => {
 
     res.json({
       connections: currentUser.connections,
+      followers: currentUser.followers || [],
+      following: currentUser.following || [],
       requests: currentUser.connectionRequests,
       suggestions: suggestions,
       sentRequests: currentUser.sentRequests
