@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { logoutByRole } from '../api/authClient.js';
+import { clearStoredUser, getStoredUser } from '../api/authStorage.js';
 
 import Navbar from '../components/Navbar';
+
+const API_BASE = 'http://localhost:5000';
 
 const Dashboard = () => {
     const navigate = useNavigate();
@@ -78,15 +82,14 @@ const Dashboard = () => {
         if (!postContent.trim() && !mediaFile && !postMediaUrl) return;
         setUploading(true);
         try {
-            const token = localStorage.getItem('token');
             let finalMediaUrl = postMediaUrl;
             
             if (mediaFile) {
                 const formData = new FormData();
                 formData.append('media', mediaFile);
-                const uploadRes = await fetch('http://localhost:5000/api/upload', {
+                const uploadRes = await fetch(`${API_BASE}/api/upload`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` },
+                    credentials: 'include',
                     body: formData
                 });
                 if (uploadRes.ok) {
@@ -101,10 +104,10 @@ const Dashboard = () => {
                 }
             }
 
-            const res = await fetch('http://localhost:5000/api/posts', {
+            const res = await fetch(`${API_BASE}/api/posts`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json' 
                 },
                 // Ensure content string is at least empty, never undefined
@@ -137,10 +140,9 @@ const Dashboard = () => {
     const handleDeletePost = async (postId) => {
         if (!window.confirm("Are you sure you want to delete this post?")) return;
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/posts/${postId}`, {
+            const res = await fetch(`${API_BASE}/api/posts/${postId}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
+                credentials: 'include'
             });
             if (res.ok) {
                 setPosts(posts.filter(p => p._id !== postId));
@@ -156,11 +158,10 @@ const Dashboard = () => {
     // HANDLE SAVE EDITED POST
     const handleSaveEdit = async (postId) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/posts/${postId}`, {
+            const res = await fetch(`${API_BASE}/api/posts/${postId}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: { 
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json' 
                 },
                 body: JSON.stringify({ content: editPostContent })
@@ -181,10 +182,9 @@ const Dashboard = () => {
     // HANDLE LIKE POST
     const handleLike = async (postId) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/posts/${postId}/like`, {
+            const res = await fetch(`${API_BASE}/api/posts/${postId}/like`, {
                 method: 'PUT',
-                headers: { 'Authorization': `Bearer ${token}` }
+                credentials: 'include'
             });
             if (res.ok) {
                 const newLikes = await res.json();
@@ -199,11 +199,10 @@ const Dashboard = () => {
     const handleAddComment = async (postId) => {
         if (!commentText.trim()) return;
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/posts/${postId}/comment`, {
+            const res = await fetch(`${API_BASE}/api/posts/${postId}/comment`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 
-                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json' 
                 },
                 body: JSON.stringify({ text: commentText })
@@ -221,12 +220,9 @@ const Dashboard = () => {
     // HANDLE DELETE COMMENT
     const handleDeleteComment = async (postId, commentId) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/posts/${postId}/comment/${commentId}`, {
+            const res = await fetch(`${API_BASE}/api/posts/${postId}/comment/${commentId}`, {
                 method: 'DELETE',
-                headers: { 
-                    'Authorization': `Bearer ${token}` 
-                }
+                credentials: 'include'
             });
             if (res.ok) {
                 const newComments = await res.json();
@@ -240,10 +236,9 @@ const Dashboard = () => {
     // HANDLE APPLYING FOR JOBS IN FEED
     const handleApply = async (jobId) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/apply`, {
+            const res = await fetch(`${API_BASE}/api/jobs/${jobId}/apply`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
+                credentials: 'include'
             });
             if (res.ok) {
                 const userId = user.id || user._id;
@@ -259,16 +254,23 @@ const Dashboard = () => {
         if (!user) return;
         
         setLoading(true);
-        const token = localStorage.getItem('token');
-        fetch(`http://localhost:5000/api/posts?page=${page}&limit=2`, {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
+        fetch(`${API_BASE}/api/posts?page=${page}&limit=2`, {
+            credentials: 'include'
         })
-            .then((res) => res.json())
+            .then(async (res) => {
+                if (res.status === 401) {
+                    clearStoredUser();
+                    navigate('/auth');
+                    return [];
+                }
+                if (!res.ok) {
+                    return [];
+                }
+                const payload = await res.json();
+                return Array.isArray(payload) ? payload : [];
+            })
             .then((data) => {
                 setPosts((prevPosts) => {
-                    // Optional: remove duplicates if strictMode double-calls
                     const newPosts = data.filter(d => !prevPosts.find(p => p._id === d._id));
                     return [...prevPosts, ...newPosts];
                 });
@@ -279,41 +281,54 @@ const Dashboard = () => {
                 console.error(err);
                 setLoading(false);
             });
-    }, [page, user]);
+    }, [page, user, navigate]);
 
     // Fetch Jobs
     useEffect(() => {
         if (!user) return;
         
-        const token = localStorage.getItem('token');
-        fetch('http://localhost:5000/api/jobs', {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
+        fetch(`${API_BASE}/api/jobs`, {
+            credentials: 'include'
         })
-            .then((res) => res.json())
+            .then(async (res) => {
+                if (res.status === 401) {
+                    clearStoredUser();
+                    navigate('/auth');
+                    return [];
+                }
+                if (!res.ok) {
+                    return [];
+                }
+                const payload = await res.json();
+                return Array.isArray(payload) ? payload : [];
+            })
             .then((data) => {
                 setJobs(data);
             })
             .catch((err) => {
                 console.error(err);
             });
-    }, [user]);
+    }, [user, navigate]);
 
     useEffect(() => {
-        const storedToken = localStorage.getItem('token');
-        const storedUser = localStorage.getItem('user');
+        const storedUser = getStoredUser();
 
-        if (!storedToken || !storedUser) {
+        if (!storedUser) {
             navigate('/auth');
         } else {
-            setUser(JSON.parse(storedUser));
+            setUser(storedUser);
         }
     }, [navigate]);
 
-    const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+    const handleLogout = async () => {
+        try {
+            if (user?.role) {
+                await logoutByRole(user.role);
+            }
+        } catch (error) {
+            // Clear local session state even if server logout request fails.
+        }
+        clearStoredUser();
         navigate('/auth');
     };
 

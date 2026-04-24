@@ -1,11 +1,14 @@
 import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import AuthParams from './pages/AuthParams.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import ForgotPassword from './pages/ForgotPassword.jsx';
 import Jobs from './pages/Jobs.jsx';
 import Messaging from './pages/Messaging.jsx';
 import Network from './pages/Network.jsx';
 import Notifications from './pages/Notifications.jsx';
 import Profile from './pages/Profile.jsx';
+import SearchResults from './pages/SearchResults.jsx';
+import ResetPassword from './pages/ResetPassword.jsx';
 
 function App() {
   return (
@@ -14,10 +17,13 @@ function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/auth" replace />} />
           <Route path="/auth" element={<AuthParams />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/network" element={<Network />} />
           <Route path="/jobs" element={<Jobs />} />
+          <Route path="/search" element={<SearchResults />} />
           <Route path="/messaging" element={<Messaging />} />
           <Route path="/notifications" element={<Notifications />} />
         </Routes>

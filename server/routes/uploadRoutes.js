@@ -34,7 +34,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   fileFilter: function (req, file, cb) {
-    const filetypes = /jpeg|jpg|png|gif|mp4|mkv|webm/;
+    const filetypes = /jpeg|jpg|png|gif|webp|mp4|mkv|webm/;
     const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
     const mimetype = filetypes.test(file.mimetype);
 
@@ -43,6 +43,9 @@ const upload = multer({
     } else {
       cb('Error: Images and Videos Only!');
     }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024
   }
 });
 
@@ -67,13 +70,13 @@ const resumeUpload = multer({
     cb('Error: Only PDF, DOC, or DOCX resume files are allowed!');
   },
   limits: {
-    fileSize: 10 * 1024 * 1024
+    fileSize: 5 * 1024 * 1024
   }
 });
 
 // POST /api/upload
 // Route to handle single file upload
-router.post('/', upload.single('media'), (req, res) => {
+router.post('/', protect, upload.single('media'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded' });
   }

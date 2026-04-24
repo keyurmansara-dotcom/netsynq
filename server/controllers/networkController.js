@@ -1,4 +1,6 @@
 import User from '../models/User.js';
+import Notification from '../models/Notification.js';
+import { createAndEmitNotification } from '../services/realtimeService.js';
 
 export const getNetworkData = async (req, res) => {
   try {
@@ -22,6 +24,7 @@ export const getNetworkData = async (req, res) => {
     ];
 
     const suggestions = await User.find({ _id: { $nin: excludedIds } })
+      .where('privacy.searchable').ne(false)
       .select('name profile.headline email _id')
       .limit(10); // Show max 10 suggestions
 
@@ -69,6 +72,13 @@ export const sendRequest = async (req, res) => {
     await targetUser.save();
     await currentUser.save();
 
+    await createAndEmitNotification(Notification, {
+      recipient: targetUserId,
+      sender: currentUserId,
+      type: 'connection_request',
+      message: 'sent you a connection request'
+    });
+
     res.status(200).json({ message: 'Connection request sent successfully' });
   } catch (error) {
     console.error(error);
@@ -100,6 +110,13 @@ export const acceptRequest = async (req, res) => {
 
     await currentUser.save();
     await requesterUser.save();
+
+    await createAndEmitNotification(Notification, {
+      recipient: requesterId,
+      sender: currentUserId,
+      type: 'connection_accept',
+      message: 'accepted your connection request'
+    });
 
     res.status(200).json({ message: 'Connection request accepted' });
   } catch (error) {

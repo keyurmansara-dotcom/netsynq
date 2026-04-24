@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { getSocket } from '../api/socket.js';
 
 const Navbar = ({ user, onLogout }) => {
   const navigate = useNavigate();
@@ -14,15 +15,19 @@ const Navbar = ({ user, onLogout }) => {
 
   useEffect(() => {
     if (!user) return;
+    const socket = getSocket(user.id || user._id);
     const fetchNotifications = async () => {
       try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
         const res = await fetch('http://localhost:5000/api/notifications', {
-          headers: { Authorization: `Bearer ${token}` }
+          credentials: 'include'
         });
+        if (res.status === 401) {
+          setUnreadCount(0);
+          return;
+        }
         if (res.ok) {
-          const data = await res.json();
+          const payload = await res.json();
+          const data = Array.isArray(payload) ? payload : [];
           const unread = data.filter(n => !n.read).length;
           setUnreadCount(unread);
         }
@@ -33,7 +38,14 @@ const Navbar = ({ user, onLogout }) => {
     fetchNotifications();
     // Optional: poll every 30 seconds
     const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
+    const handleNewNotification = () => {
+      setUnreadCount((current) => current + 1);
+    };
+    socket.on('notification:new', handleNewNotification);
+    return () => {
+      clearInterval(interval);
+      socket.off('notification:new', handleNewNotification);
+    };
   }, [user]);
 
   return (
@@ -52,12 +64,12 @@ const Navbar = ({ user, onLogout }) => {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const query = searchTerm.trim();
-                  navigate(query ? `/jobs?q=${encodeURIComponent(query)}` : '/jobs');
+                  navigate(query ? `/search?q=${encodeURIComponent(query)}` : '/search');
                 }}
               >
                 <input
                   type="text"
-                  placeholder="Search jobs"
+                  placeholder="Search people, jobs, companies"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="bg-[#EDF3F8] text-sm rounded-md pl-10 pr-4 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"

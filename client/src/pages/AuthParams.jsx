@@ -1,13 +1,27 @@
-import axios from 'axios';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { authHttp, loginByRole } from '../api/authClient.js';
+import { getRememberedLogin, setRememberedLogin, setStoredUser } from '../api/authStorage.js';
 
 const AuthParams = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({ name: '', email: '', password: '', role: 'seeker' });
+  const [rememberLogin, setRememberLogin] = useState(true);
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const rememberedLogin = getRememberedLogin();
+    if (!rememberedLogin) return;
+
+    setFormData((current) => ({
+      ...current,
+      email: rememberedLogin.email || current.email,
+      role: rememberedLogin.role || current.role
+    }));
+    setRememberLogin(true);
+  }, []);
 
   const handleToggle = () => {
     setIsLogin(!isLogin);
@@ -23,22 +37,38 @@ const AuthParams = () => {
     setError(null);
     setIsSubmitting(true);
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/signup';
-      const payload = isLogin 
+      const payload = isLogin
         ? { email: formData.email, password: formData.password }
         : formData;
 
-      const res = await axios.post(`http://localhost:5000${endpoint}`, payload);
+      const res = isLogin
+        ? await loginByRole({ role: formData.role, email: formData.email, password: formData.password })
+        : await authHttp.post('/api/auth/signup', payload);
       
-      if (res.data.token) {
-        localStorage.setItem('token', res.data.token);
-        localStorage.setItem('user', JSON.stringify(res.data.user));
-        // Redirect based on role
-        if (res.data.user.role === 'recruiter') {
-            navigate('/dashboard'); // or change to '/recruiter-dashboard' later
-        } else {
-            navigate('/dashboard');
+      if (res.data.user) {
+        if (isLogin && formData.email && formData.password && navigator.credentials && window.PasswordCredential) {
+          try {
+            const credential = new window.PasswordCredential({
+              id: formData.email,
+              password: formData.password,
+              name: formData.email
+            });
+            await navigator.credentials.store(credential);
+          } catch {
+            // Ignore unsupported browser or blocked password-manager writes.
+          }
         }
+
+        setStoredUser(res.data.user);
+        if (isLogin && rememberLogin) {
+          setRememberedLogin({
+            email: formData.email,
+            role: formData.role
+          });
+        } else {
+          setRememberedLogin(null);
+        }
+        navigate('/dashboard');
       } else if (res.data.message === 'User created successfully') {
         setIsLogin(true); // Switch to login after successful signup
         alert('Signup successful! Please log in.');
@@ -113,7 +143,7 @@ const AuthParams = () => {
 
         {error && <div className="mb-4 p-3 text-sm text-red-700 bg-red-100 border border-red-200 rounded-xl">{error}</div>}
 
-        <form onSubmit={handleAuth} className="space-y-4">
+        <form onSubmit={handleAuth} className="space-y-4" autoComplete="on" method="post">
           {!isLogin && (
             <div>
               <label className="block text-sm font-medium text-slate-700">Full Name</label>
@@ -121,6 +151,7 @@ const AuthParams = () => {
                 type="text"
                 name="name"
                 value={formData.name || ''}
+                autoComplete="name"
                 className="w-full px-4 py-3 mt-1.5 border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
                 onChange={handleChange}
                 required
@@ -134,6 +165,7 @@ const AuthParams = () => {
               type="email"
               name="email"
               value={formData.email}
+              autoComplete={isLogin ? 'username' : 'email'}
               className="w-full px-4 py-3 mt-1.5 border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
               onChange={handleChange}
               required
@@ -146,11 +178,27 @@ const AuthParams = () => {
               type="password"
               name="password"
               value={formData.password}
+              autoComplete={isLogin ? 'current-password' : 'new-password'}
               className="w-full px-4 py-3 mt-1.5 border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
               onChange={handleChange}
               required
             />
           </div>
+
+          {isLogin && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Login as</label>
+              <select
+                name="role"
+                onChange={handleChange}
+                value={formData.role}
+                className="w-full px-4 py-3 mt-1.5 border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="seeker">Job Seeker</option>
+                <option value="recruiter">Recruiter / Hiring Manager</option>
+              </select>
+            </div>
+          )}
 
           {!isLogin && (
             <>
@@ -199,6 +247,18 @@ const AuthParams = () => {
             </>
           )}
 
+          {isLogin && (
+            <label className="flex items-center gap-3 text-sm text-slate-600 select-none">
+              <input
+                type="checkbox"
+                checked={rememberLogin}
+                onChange={(e) => setRememberLogin(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+              />
+              Remember me on this device
+            </label>
+          )}
+
           <button
             disabled={isSubmitting}
             className="w-full px-6 py-3 mt-2 text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
@@ -207,7 +267,13 @@ const AuthParams = () => {
           </button>
         </form>
 
-        <div className="flex items-center justify-center mt-5">
+        <div className="mt-5 flex flex-col items-center gap-3">
+          {isLogin && (
+            <Link to="/forgot-password" className="text-sm text-sky-700 hover:text-sky-900 hover:underline font-medium">
+              Forgot password?
+            </Link>
+          )}
+
           <button onClick={handleToggle} className="text-sm text-sky-700 hover:text-sky-900 hover:underline font-medium">
             {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Login'}
           </button>

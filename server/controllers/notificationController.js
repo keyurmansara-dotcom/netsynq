@@ -1,11 +1,17 @@
 import Notification from '../models/Notification.js';
 
+const safePopulate = {
+  sender: 'name profile.headline',
+  post: 'content mediaUrl',
+  job: 'title company'
+};
+
 export const getNotifications = async (req, res) => {
   try {
     const notifications = await Notification.find({ recipient: req.user.userId })
-      .populate('sender', 'name profile.headline')
-      .populate('post', 'content mediaUrl')
-      .populate('job', 'title company')
+      .populate('sender', safePopulate.sender)
+      .populate('post', safePopulate.post)
+      .populate('job', safePopulate.job)
       .sort({ createdAt: -1 });
     res.json(notifications);
   } catch (error) {

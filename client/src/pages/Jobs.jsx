@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { logoutByRole, refreshByRole } from '../api/authClient.js';
+import { clearStoredUser, getStoredUser } from '../api/authStorage.js';
 import Navbar from '../components/Navbar';
+
+const API_BASE = 'http://localhost:5000';
 
 const Jobs = () => {
     const navigate = useNavigate();
@@ -8,6 +12,7 @@ const Jobs = () => {
     const [user, setUser] = useState(null);
     const [jobs, setJobs] = useState([]);
     const [myJobs, setMyJobs] = useState([]);
+    const [myApplications, setMyApplications] = useState([]);
     
     // Animation/Hired Modals State
     const [showCelebration, setShowCelebration] = useState(null);
@@ -28,6 +33,23 @@ const Jobs = () => {
     const [isPosting, setIsPosting] = useState(false);
     const [newJob, setNewJob] = useState({ title: '', company: '', location: '', description: '', type: 'Full-time', skillsRequired: '' });
 
+    const fetchWithRetry = async (url, options = {}, roleOverride = null) => {
+        const requestOptions = { credentials: 'include', ...options };
+        let res = await fetch(url, requestOptions);
+        const role = roleOverride || user?.role;
+
+        if (res.status === 401 && role) {
+            try {
+                await refreshByRole(role);
+                res = await fetch(url, requestOptions);
+            } catch (error) {
+                // Fall through and handle remaining 401 in caller.
+            }
+        }
+
+        return res;
+    };
+
     const searchQuery = useMemo(() => {
         const params = new URLSearchParams(location.search);
         return (params.get('q') || '').trim().toLowerCase();
@@ -39,6 +61,7 @@ const Jobs = () => {
             const haystack = [
                 job.title,
                 job.company,
+                job.companyId?.name,
                 job.location,
                 job.description,
                 ...(job.skillsRequired || []),
@@ -54,6 +77,7 @@ const Jobs = () => {
             const haystack = [
                 job.title,
                 job.company,
+                job.companyId?.name,
                 job.location,
                 job.description,
                 ...(job.skillsRequired || []),
@@ -64,18 +88,19 @@ const Jobs = () => {
     }, [myJobs, searchQuery]);
 
     useEffect(() => {
-        const storedUser = localStorage.getItem('user');
+        const storedUser = getStoredUser();
         if (!storedUser) {
             navigate('/auth');
         } else {
-            const parsedUser = JSON.parse(storedUser);
+            const parsedUser = storedUser;
             setUser(parsedUser);
             
             // Fetch jobs depending on role
             if (parsedUser.role === 'recruiter') {
-                fetchMyJobs(parsedUser);
+                fetchMyJobs(parsedUser.role);
             } else {
-                fetchAllJobs(parsedUser);
+                fetchAllJobs(parsedUser.role);
+                fetchMyApplications(parsedUser.role);
             }
         }
     }, [navigate]);
@@ -95,32 +120,56 @@ const Jobs = () => {
         }
     }, [jobs, user]);
 
-    const fetchAllJobs = async (currentUser) => {
+    const fetchAllJobs = async (roleOverride = null) => {
         try {
-            const res = await fetch('http://localhost:5000/api/jobs', {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-            });
-            if (res.ok) setJobs(await res.json());
+            const res = await fetchWithRetry(`${API_BASE}/api/jobs`, {}, roleOverride);
+            if (res.status === 401) {
+                clearStoredUser();
+                navigate('/auth');
+                return;
+            }
+            if (res.ok) {
+                const payload = await res.json();
+                setJobs(Array.isArray(payload) ? payload : []);
+            }
         } catch (error) { console.error('Failed to fetch jobs', error); }
     };
 
-    const fetchMyJobs = async (currentUser) => {
+    const fetchMyJobs = async (roleOverride = null) => {
         try {
-            const res = await fetch('http://localhost:5000/api/jobs/myjobs', {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-            });
-            if (res.ok) setMyJobs(await res.json());
+            const res = await fetchWithRetry(`${API_BASE}/api/jobs/myjobs`, {}, roleOverride);
+            if (res.status === 401) {
+                clearStoredUser();
+                navigate('/auth');
+                return;
+            }
+            if (res.ok) {
+                const payload = await res.json();
+                setMyJobs(Array.isArray(payload) ? payload : []);
+            }
         } catch (error) { console.error('Failed to fetch my jobs', error); }
+    };
+
+    const fetchMyApplications = async (roleOverride = null) => {
+        try {
+            const res = await fetchWithRetry(`${API_BASE}/api/jobs/applications`, {}, roleOverride);
+            if (res.status === 401) {
+                clearStoredUser();
+                navigate('/auth');
+                return;
+            }
+            if (res.ok) {
+                const payload = await res.json();
+                setMyApplications(Array.isArray(payload) ? payload : []);
+            }
+        } catch (error) { console.error('Failed to fetch applications', error); }
     };
 
     const handleApply = async (jobId) => {
         try {
-            const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/apply`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-            });
+            const res = await fetchWithRetry(`${API_BASE}/api/jobs/${jobId}/apply`, { method: 'POST' });
             if (res.ok) {
-                await fetchAllJobs(user); // refresh list
+                await fetchAllJobs(user?.role); // refresh list
                 return;
             }
 
@@ -138,11 +187,20 @@ const Jobs = () => {
     const handlePostJob = async (e) => {
         e.preventDefault();
         try {
-            const payload = { ...newJob, skillsRequired: newJob.skillsRequired.split(',').map(s => s.trim()) };
-            const res = await fetch('http://localhost:5000/api/jobs', {
+            const payload = {
+                title: newJob.title.trim(),
+                company: newJob.company.trim(),
+                location: newJob.location.trim(),
+                description: newJob.description.trim(),
+                type: newJob.type,
+                skillsRequired: newJob.skillsRequired
+                    .split(',')
+                    .map((skill) => skill.trim())
+                    .filter(Boolean)
+            };
+            const res = await fetchWithRetry(`${API_BASE}/api/jobs`, {
                 method: 'POST',
                 headers: { 
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(payload)
@@ -150,23 +208,32 @@ const Jobs = () => {
             if (res.ok) {
                 setIsPosting(false);
                 setNewJob({ title: '', company: '', location: '', description: '', type: 'Full-time', skillsRequired: '' });
-                fetchMyJobs(user);
-            } else alert('Failed to create job');
+                fetchMyJobs(user?.role);
+                return;
+            }
+
+            let errorMessage = 'Failed to create job';
+            try {
+                const data = await res.json();
+                if (data?.message) errorMessage = data.message;
+            } catch {
+                // keep fallback message when response is not JSON
+            }
+            alert(errorMessage);
         } catch (err) { console.error(err); }
     };
 
     const handleUpdateStatus = async (jobId, applicantId, status) => {
         try {
-            const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/applicant/${applicantId}`, {
+            const res = await fetchWithRetry(`${API_BASE}/api/jobs/${jobId}/applicant/${applicantId}`, {
                 method: 'PUT',
                 headers: { 
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ status })
             });
             if (res.ok) {
-                await fetchMyJobs(user);
+                await fetchMyJobs(user?.role);
                 return true;
             }
             return false;
@@ -209,9 +276,15 @@ const Jobs = () => {
         if (ok) closeDecisionModal();
     };
 
-    const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+    const handleLogout = async () => {
+        try {
+            if (user?.role) {
+                await logoutByRole(user.role);
+            }
+        } catch (error) {
+            // Clear local session even if server logout fails.
+        }
+        clearStoredUser();
         navigate('/auth');
     };
 
@@ -246,8 +319,8 @@ const Jobs = () => {
             {showCelebration && (
                 <>
                     <ConfettiEffect />
-                    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                        <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full text-center animate-popOut relative">
+                    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6">
+                        <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full text-center animate-popOut relative origin-center transform-gpu">
                             <button onClick={() => setShowCelebration(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800">
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
@@ -357,7 +430,7 @@ const Jobs = () => {
                                             <input type="text" placeholder="Company Name" required value={newJob.company} onChange={e => setNewJob({...newJob, company: e.target.value})} className="border p-2 rounded" />
                                             <input type="text" placeholder="Location" required value={newJob.location} onChange={e => setNewJob({...newJob, location: e.target.value})} className="border p-2 rounded" />
                                             <select value={newJob.type} onChange={e => setNewJob({...newJob, type: e.target.value})} className="border p-2 rounded">
-                                                <option>Full-time</option><option>Part-time</option>
+                                                <option>Full-time</option><option>Part-time</option><option>Contract</option><option>Remote</option>
                                             </select>
                                         </div>
                                         <input type="text" placeholder="Skills Required (comma separated)" required value={newJob.skillsRequired} onChange={e => setNewJob({...newJob, skillsRequired: e.target.value})} className="border p-2 rounded w-full" />
@@ -462,10 +535,31 @@ const Jobs = () => {
 
                         {/* Main Feed: Job Search */}
                         <div className="col-span-1 md:col-span-3">
-                            <div className="bg-white rounded-lg border border-gray-200 p-6">
+                            <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
                                 <h1 className="text-xl font-bold mb-6">
                                     {searchQuery ? `Search results for "${searchQuery}"` : 'Recommended for you'}
                                 </h1>
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <h2 className="text-base font-semibold text-slate-900">Application tracking</h2>
+                                            <p className="text-sm text-slate-500">Your submitted jobs and current review status.</p>
+                                        </div>
+                                        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 border border-slate-200">{myApplications.length} applications</span>
+                                    </div>
+                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {myApplications.length > 0 ? myApplications.slice(0, 4).map((job) => {
+                                            const myApplication = job.applicants?.find(a => a.user === user.id || a.user?._id === user.id || a.user === user._id || a.user?._id === user._id);
+                                            return (
+                                                <div key={job._id} className="rounded-xl border border-slate-200 bg-white p-4">
+                                                    <p className="font-semibold text-slate-900">{job.title}</p>
+                                                    <p className="text-sm text-slate-500">{job.companyId?.name || job.company} • {job.location}</p>
+                                                    <p className="mt-2 inline-flex rounded-full px-3 py-1 text-xs font-semibold bg-slate-100 text-slate-700">{myApplication?.status || 'Pending'}</p>
+                                                </div>
+                                            );
+                                        }) : <p className="text-sm text-slate-500">No applications yet.</p>}
+                                    </div>
+                                </div>
                                 {filteredJobs.length === 0 ? (
                                     <p className="text-gray-500 text-center py-10">{searchQuery ? 'No jobs match your search.' : 'No jobs available right now.'}</p>
                                 ) : (
@@ -477,11 +571,11 @@ const Jobs = () => {
                                                 <div key={job._id} className="flex flex-col sm:flex-row sm:items-start justify-between border-b pb-6 last:border-0 last:pb-0">
                                                     <div className="flex space-x-4">
                                                         <div className="h-14 w-14 rounded bg-gray-100 flex items-center justify-center font-bold text-gray-400 text-xl shrink-0">
-                                                            {job.company.charAt(0)}
+                                                            {(job.companyId?.name || job.company || '?').charAt(0)}
                                                         </div>
                                                         <div>
                                                             <h3 className="text-lg font-semibold text-blue-600 hover:underline cursor-pointer">{job.title}</h3>
-                                                            <p className="text-gray-800">{job.company} • {job.location}</p>
+                                                            <p className="text-gray-800">{job.companyId?.name || job.company} • {job.location}</p>
                                                             <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
                                                                 <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">{job.type === 'Full-time' ? 'Full-time' : 'Part-time'}</span>
                                                                 {job.skillsRequired && <span>Skills: {job.skillsRequired.slice(0,3).join(', ')}</span>}

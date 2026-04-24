@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { logoutByRole, refreshByRole } from '../api/authClient.js';
+import { clearStoredUser, getStoredUser, setStoredUser } from '../api/authStorage.js';
 import Navbar from '../components/Navbar';
 
 const apiBase = 'http://localhost:5000';
+
+const createExperienceItem = () => ({ title: '', company: '', location: '', startDate: '', endDate: '', currentlyWorking: false, description: '' });
+const createEducationItem = () => ({ school: '', degree: '', fieldOfStudy: '', startDate: '', endDate: '', description: '' });
+const createProjectItem = () => ({ name: '', description: '', url: '', technologies: '', startDate: '', endDate: '' });
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -12,8 +18,23 @@ const Profile = () => {
     email: '',
     headline: '',
     location: '',
-    companyName: ''
+    companyName: '',
+    summary: '',
+    website: '',
+    industry: '',
+    github: '',
+    portfolio: '',
+    linkedin: '',
+    profileVisibility: 'public',
+    searchable: true,
+    showResume: true,
+    allowConnectionRequests: true,
+    openToWork: false,
+    skillsText: ''
   });
+  const [experience, setExperience] = useState([createExperienceItem()]);
+  const [education, setEducation] = useState([createEducationItem()]);
+  const [projects, setProjects] = useState([createProjectItem()]);
   const [resumeFile, setResumeFile] = useState(null);
   const [uploadingResume, setUploadingResume] = useState(false);
   const [deletingResume, setDeletingResume] = useState(false);
@@ -22,40 +43,77 @@ const Profile = () => {
   const [error, setError] = useState('');
   const [showDeleteResumeModal, setShowDeleteResumeModal] = useState(false);
 
-  useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
+  const fetchWithRetry = async (url, options = {}, roleOverride = null) => {
+    const requestOptions = { credentials: 'include', ...options };
+    let res = await fetch(url, requestOptions);
+    const role = roleOverride || user?.role;
 
-    if (!storedToken || !storedUser) {
+    if (res.status === 401 && role) {
+      try {
+        await refreshByRole(role);
+        res = await fetch(url, requestOptions);
+      } catch (refreshError) {
+        // Keep 401 handling in callers.
+      }
+    }
+
+    return res;
+  };
+
+  useEffect(() => {
+    const storedUser = getStoredUser();
+
+    if (!storedUser) {
       navigate('/auth');
       return;
     }
 
+    const parsedStoredUser = storedUser;
+
     const loadProfile = async () => {
       try {
-        const res = await fetch(`${apiBase}/api/profile/me`, {
-          headers: { Authorization: `Bearer ${storedToken}` }
-        });
+        const res = await fetchWithRetry(`${apiBase}/api/profile/me`, {}, parsedStoredUser.role);
+
+        if (res.status === 401) {
+          clearStoredUser();
+          navigate('/auth');
+          return;
+        }
 
         if (!res.ok) {
-          navigate('/auth');
+          setError('Unable to load profile right now. Please try again.');
           return;
         }
 
         const data = await res.json();
         setUser(data);
-        localStorage.setItem('user', JSON.stringify({
-          ...JSON.parse(storedUser),
+        setStoredUser({
+          ...parsedStoredUser,
           ...data,
           id: data._id,
-        }));
+        });
         setForm({
           name: data.name || '',
           email: data.email || '',
           headline: data.profile?.headline || '',
           location: data.profile?.location || '',
-          companyName: data.profile?.companyName || ''
+          companyName: data.profile?.companyName || '',
+          summary: data.profile?.summary || '',
+          website: data.profile?.website || '',
+          industry: data.profile?.industry || '',
+          github: data.links?.github || '',
+          portfolio: data.links?.portfolio || '',
+          linkedin: data.links?.linkedin || '',
+          profileVisibility: data.privacy?.profileVisibility || 'public',
+          searchable: data.privacy?.searchable ?? true,
+          showResume: data.privacy?.showResume ?? true,
+          allowConnectionRequests: data.privacy?.allowConnectionRequests ?? true,
+          openToWork: data.openToWork ?? false,
+          skillsText: Array.isArray(data.skills) ? data.skills.join(', ') : ''
         });
+        setExperience(Array.isArray(data.experience) && data.experience.length ? data.experience.map((item) => ({ ...createExperienceItem(), ...item })) : [createExperienceItem()]);
+        setEducation(Array.isArray(data.education) && data.education.length ? data.education.map((item) => ({ ...createEducationItem(), ...item })) : [createEducationItem()]);
+        setProjects(Array.isArray(data.projects) && data.projects.length ? data.projects.map((item) => ({ ...createProjectItem(), ...item, technologies: Array.isArray(item.technologies) ? item.technologies.join(', ') : '' })) : [createProjectItem()]);
       } catch (err) {
         setError('Unable to load profile right now.');
         console.error(err);
@@ -76,15 +134,58 @@ const Profile = () => {
     return () => clearTimeout(timeoutId);
   }, [message, error]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  const handleLogout = async () => {
+    try {
+      if (user?.role) {
+        await logoutByRole(user.role);
+      }
+    } catch (logoutError) {
+      // Clear local session state even if server logout fails.
+    }
+    clearStoredUser();
     navigate('/auth');
   };
 
   const handleChange = (e) => {
-    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+    const { name, value, type, checked } = e.target;
+    setForm((prev) => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
   };
+
+  const updateExperience = (index, field, value) => {
+    setExperience((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item));
+  };
+
+  const updateEducation = (index, field, value) => {
+    setEducation((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item));
+  };
+
+  const updateProject = (index, field, value) => {
+    setProjects((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item));
+  };
+
+  const buildStructuredPayload = () => ({
+    ...form,
+    skills: form.skillsText.split(',').map((item) => item.trim()).filter(Boolean),
+    experience: experience.map((item) => ({ ...item, title: item.title.trim(), company: item.company.trim(), location: item.location.trim(), startDate: item.startDate.trim(), endDate: item.endDate.trim(), description: item.description.trim(), currentlyWorking: Boolean(item.currentlyWorking) })).filter((item) => item.title || item.company || item.description),
+    education: education.map((item) => ({ ...item, school: item.school.trim(), degree: item.degree.trim(), fieldOfStudy: item.fieldOfStudy.trim(), startDate: item.startDate.trim(), endDate: item.endDate.trim(), description: item.description.trim() })).filter((item) => item.school || item.degree || item.fieldOfStudy),
+    projects: projects.map((item) => ({ ...item, name: item.name.trim(), description: item.description.trim(), url: item.url.trim(), technologies: item.technologies.split(',').map((entry) => entry.trim()).filter(Boolean), startDate: item.startDate.trim(), endDate: item.endDate.trim() })).filter((item) => item.name || item.description),
+    links: {
+      github: form.github.trim(),
+      portfolio: form.portfolio.trim(),
+      linkedin: form.linkedin.trim(),
+      website: form.website.trim()
+    },
+    privacy: {
+      profileVisibility: form.profileVisibility,
+      searchable: form.searchable,
+      showResume: form.showResume,
+      allowConnectionRequests: form.allowConnectionRequests
+    },
+    openToWork: form.openToWork
+  });
 
   const handleSaveProfile = async (e) => {
     e.preventDefault();
@@ -93,15 +194,19 @@ const Profile = () => {
     setSavingProfile(true);
 
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${apiBase}/api/profile/update`, {
+      const res = await fetchWithRetry(`${apiBase}/api/profile/update`, {
         method: 'PUT',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(form)
+        body: JSON.stringify(buildStructuredPayload())
       });
+
+      if (res.status === 401) {
+        clearStoredUser();
+        navigate('/auth');
+        return;
+      }
 
       if (!res.ok) {
         const data = await res.json();
@@ -110,10 +215,10 @@ const Profile = () => {
 
       const updated = await res.json();
       setUser((prev) => ({ ...prev, ...updated, profile: updated.profile }));
-      localStorage.setItem('user', JSON.stringify({
-        ...(JSON.parse(localStorage.getItem('user') || '{}')),
+      setStoredUser({
+        ...(getStoredUser() || {}),
         ...updated,
-      }));
+      });
       setMessage('Profile saved.');
     } catch (err) {
       setError(err.message || 'Failed to save profile.');
@@ -131,17 +236,19 @@ const Profile = () => {
     setUploadingResume(true);
 
     try {
-      const token = localStorage.getItem('token');
       const formData = new FormData();
       formData.append('resume', resumeFile);
 
-      const uploadRes = await fetch(`${apiBase}/api/upload/resume`, {
+      const uploadRes = await fetchWithRetry(`${apiBase}/api/upload/resume`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`
-        },
         body: formData
       });
+
+      if (uploadRes.status === 401) {
+        clearStoredUser();
+        navigate('/auth');
+        return;
+      }
 
       if (!uploadRes.ok) {
         const data = await uploadRes.json();
@@ -149,14 +256,19 @@ const Profile = () => {
       }
 
       const data = await uploadRes.json();
-      const updateRes = await fetch(`${apiBase}/api/profile/update`, {
+      const updateRes = await fetchWithRetry(`${apiBase}/api/profile/update`, {
         method: 'PUT',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ resumeUrl: data.resumeUrl })
       });
+
+      if (updateRes.status === 401) {
+        clearStoredUser();
+        navigate('/auth');
+        return;
+      }
 
       if (!updateRes.ok) {
         const updateData = await updateRes.json();
@@ -165,10 +277,10 @@ const Profile = () => {
 
       const updated = await updateRes.json();
       setUser((prev) => ({ ...prev, ...updated, profile: updated.profile }));
-      localStorage.setItem('user', JSON.stringify({
-        ...(JSON.parse(localStorage.getItem('user') || '{}')),
+      setStoredUser({
+        ...(getStoredUser() || {}),
         ...updated,
-      }));
+      });
       setResumeFile(null);
       setMessage('Resume uploaded successfully.');
     } catch (err) {
@@ -187,30 +299,38 @@ const Profile = () => {
     setShowDeleteResumeModal(false);
 
     try {
-      const token = localStorage.getItem('token');
-
-      const deleteRes = await fetch(`${apiBase}/api/upload/resume`, {
+      const deleteRes = await fetchWithRetry(`${apiBase}/api/upload/resume`, {
         method: 'DELETE',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ resumeUrl: user.profile.resumeUrl })
       });
+
+      if (deleteRes.status === 401) {
+        clearStoredUser();
+        navigate('/auth');
+        return;
+      }
 
       if (!deleteRes.ok) {
         const deleteData = await deleteRes.json();
         throw new Error(deleteData.message || 'Failed to delete resume file');
       }
 
-      const updateRes = await fetch(`${apiBase}/api/profile/update`, {
+      const updateRes = await fetchWithRetry(`${apiBase}/api/profile/update`, {
         method: 'PUT',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ resumeUrl: '' })
       });
+
+      if (updateRes.status === 401) {
+        clearStoredUser();
+        navigate('/auth');
+        return;
+      }
 
       if (!updateRes.ok) {
         const updateData = await updateRes.json();
@@ -219,10 +339,10 @@ const Profile = () => {
 
       const updated = await updateRes.json();
       setUser((prev) => ({ ...prev, ...updated, profile: updated.profile }));
-      localStorage.setItem('user', JSON.stringify({
-        ...(JSON.parse(localStorage.getItem('user') || '{}')),
+      setStoredUser({
+        ...(getStoredUser() || {}),
         ...updated,
-      }));
+      });
       setResumeFile(null);
       setMessage('Resume deleted.');
     } catch (err) {
@@ -384,6 +504,221 @@ const Profile = () => {
                     className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
                   />
                 </label>
+
+                <label className="space-y-2 sm:col-span-2">
+                  <span className="text-sm font-medium text-slate-700">Profile summary</span>
+                  <textarea
+                    name="summary"
+                    value={form.summary}
+                    onChange={handleChange}
+                    rows="4"
+                    placeholder="Write a short professional summary."
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Website</span>
+                  <input
+                    name="website"
+                    value={form.website}
+                    onChange={handleChange}
+                    placeholder="https://your-site.com"
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Industry</span>
+                  <input
+                    name="industry"
+                    value={form.industry}
+                    onChange={handleChange}
+                    placeholder="Software, Finance, Healthcare"
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
+                  />
+                </label>
+
+                <label className="space-y-2 sm:col-span-2">
+                  <span className="text-sm font-medium text-slate-700">Skills</span>
+                  <input
+                    name="skillsText"
+                    value={form.skillsText}
+                    onChange={handleChange}
+                    placeholder="React, Node.js, MongoDB"
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
+                  />
+                </label>
+
+                <div className="sm:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-slate-700">GitHub</span>
+                    <input
+                      name="github"
+                      value={form.github}
+                      onChange={handleChange}
+                      placeholder="https://github.com/you"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-slate-700">Portfolio</span>
+                    <input
+                      name="portfolio"
+                      value={form.portfolio}
+                      onChange={handleChange}
+                      placeholder="https://portfolio.com"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-slate-700">LinkedIn</span>
+                    <input
+                      name="linkedin"
+                      value={form.linkedin}
+                      onChange={handleChange}
+                      placeholder="https://linkedin.com/in/you"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-sky-500 focus:bg-white"
+                    />
+                  </label>
+                </div>
+
+                <div className="sm:col-span-2 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Profile privacy</p>
+                      <p className="text-xs text-slate-500">Control who can discover and contact you.</p>
+                    </div>
+                    <select
+                      name="profileVisibility"
+                      value={form.profileVisibility}
+                      onChange={handleChange}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="public">Public</option>
+                      <option value="connections">Connections only</option>
+                      <option value="private">Private</option>
+                    </select>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+                    <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 border border-slate-200">
+                      <input type="checkbox" name="searchable" checked={form.searchable} onChange={handleChange} />
+                      <span>Show in search</span>
+                    </label>
+                    <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 border border-slate-200">
+                      <input type="checkbox" name="showResume" checked={form.showResume} onChange={handleChange} />
+                      <span>Show resume</span>
+                    </label>
+                    <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 border border-slate-200">
+                      <input type="checkbox" name="allowConnectionRequests" checked={form.allowConnectionRequests} onChange={handleChange} />
+                      <span>Allow requests</span>
+                    </label>
+                    <label className="flex items-center gap-2 rounded-2xl bg-white px-3 py-3 border border-slate-200">
+                      <input type="checkbox" name="openToWork" checked={form.openToWork} onChange={handleChange} />
+                      <span>Open to work</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Experience</p>
+                      <p className="text-xs text-slate-500">Add professional history.</p>
+                    </div>
+                    <button type="button" onClick={() => setExperience((current) => [...current, createExperienceItem()])} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Add</button>
+                  </div>
+                  <div className="mt-4 space-y-4">
+                    {experience.map((item, index) => (
+                      <div key={`experience-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-slate-800">Role {index + 1}</p>
+                          {experience.length > 1 && (
+                            <button type="button" onClick={() => setExperience((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-semibold text-rose-600 hover:underline">Remove</button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <input value={item.title} onChange={(e) => updateExperience(index, 'title', e.target.value)} placeholder="Title" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <input value={item.company} onChange={(e) => updateExperience(index, 'company', e.target.value)} placeholder="Company" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <input value={item.location} onChange={(e) => updateExperience(index, 'location', e.target.value)} placeholder="Location" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <input value={item.startDate} onChange={(e) => updateExperience(index, 'startDate', e.target.value)} placeholder="Start" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                            <input value={item.endDate} onChange={(e) => updateExperience(index, 'endDate', e.target.value)} placeholder="End" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          </div>
+                        </div>
+                        <label className="flex items-center gap-2 text-sm text-slate-600">
+                          <input type="checkbox" checked={item.currentlyWorking} onChange={(e) => updateExperience(index, 'currentlyWorking', e.target.checked)} />
+                          Currently working here
+                        </label>
+                        <textarea value={item.description} onChange={(e) => updateExperience(index, 'description', e.target.value)} placeholder="Describe your work" rows="3" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Education</p>
+                      <p className="text-xs text-slate-500">Add degrees and certifications.</p>
+                    </div>
+                    <button type="button" onClick={() => setEducation((current) => [...current, createEducationItem()])} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Add</button>
+                  </div>
+                  <div className="mt-4 space-y-4">
+                    {education.map((item, index) => (
+                      <div key={`education-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-slate-800">Education {index + 1}</p>
+                          {education.length > 1 && (
+                            <button type="button" onClick={() => setEducation((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-semibold text-rose-600 hover:underline">Remove</button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <input value={item.school} onChange={(e) => updateEducation(index, 'school', e.target.value)} placeholder="School" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <input value={item.degree} onChange={(e) => updateEducation(index, 'degree', e.target.value)} placeholder="Degree" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <input value={item.fieldOfStudy} onChange={(e) => updateEducation(index, 'fieldOfStudy', e.target.value)} placeholder="Field of study" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <input value={item.startDate} onChange={(e) => updateEducation(index, 'startDate', e.target.value)} placeholder="Start" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                            <input value={item.endDate} onChange={(e) => updateEducation(index, 'endDate', e.target.value)} placeholder="End" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          </div>
+                        </div>
+                        <textarea value={item.description} onChange={(e) => updateEducation(index, 'description', e.target.value)} placeholder="Notes" rows="3" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="sm:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Projects</p>
+                      <p className="text-xs text-slate-500">Show work that supports your profile.</p>
+                    </div>
+                    <button type="button" onClick={() => setProjects((current) => [...current, createProjectItem()])} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Add</button>
+                  </div>
+                  <div className="mt-4 space-y-4">
+                    {projects.map((item, index) => (
+                      <div key={`project-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-slate-800">Project {index + 1}</p>
+                          {projects.length > 1 && (
+                            <button type="button" onClick={() => setProjects((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-semibold text-rose-600 hover:underline">Remove</button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <input value={item.name} onChange={(e) => updateProject(index, 'name', e.target.value)} placeholder="Project name" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <input value={item.url} onChange={(e) => updateProject(index, 'url', e.target.value)} placeholder="Project URL" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <input value={item.technologies} onChange={(e) => updateProject(index, 'technologies', e.target.value)} placeholder="Technologies, comma separated" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm sm:col-span-2" />
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <input value={item.startDate} onChange={(e) => updateProject(index, 'startDate', e.target.value)} placeholder="Start" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                          <input value={item.endDate} onChange={(e) => updateProject(index, 'endDate', e.target.value)} placeholder="End" className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                        </div>
+                        <textarea value={item.description} onChange={(e) => updateProject(index, 'description', e.target.value)} placeholder="Project summary" rows="3" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -405,7 +740,7 @@ const Profile = () => {
                   <h2 className="mt-2 text-xl font-semibold text-slate-900">Add a resume recruiters can open</h2>
                 </div>
                 <div className="rounded-full bg-sky-50 px-4 py-2 text-xs font-medium text-sky-700">
-                  PDF, DOC, DOCX up to 10 MB
+                  PDF, DOC, DOCX up to 5 MB
                 </div>
               </div>
 

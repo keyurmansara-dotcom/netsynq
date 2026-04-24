@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { logoutByRole, refreshByRole } from '../api/authClient.js';
+import { clearStoredUser, getStoredUser } from '../api/authStorage.js';
 import Navbar from '../components/Navbar';
+
+const API_BASE = 'http://localhost:5000';
 
 const Network = () => {
     const navigate = useNavigate();
@@ -9,25 +13,52 @@ const Network = () => {
     const [loading, setLoading] = useState(true);
     const [activeView, setActiveView] = useState('suggestions');
 
+    const fetchWithRetry = async (url, options = {}, roleOverride = null) => {
+        const requestOptions = { credentials: 'include', ...options };
+        let res = await fetch(url, requestOptions);
+        const role = roleOverride || user?.role;
+
+        if (res.status === 401 && role) {
+            try {
+                await refreshByRole(role);
+                res = await fetch(url, requestOptions);
+            } catch (error) {
+                // If refresh fails, keep original 401 behavior below.
+            }
+        }
+
+        return res;
+    };
+
     useEffect(() => {
-        const storedUser = localStorage.getItem('user');
+        const storedUser = getStoredUser();
         if (!storedUser) {
             navigate('/auth');
         } else {
-            setUser(JSON.parse(storedUser));
-            fetchNetworkData();
+            setUser(storedUser);
+            fetchNetworkData(storedUser.role);
         }
     }, [navigate]);
 
-    const fetchNetworkData = async () => {
+    const fetchNetworkData = async (roleOverride = null) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:5000/api/network', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithRetry(`${API_BASE}/api/network`, {}, roleOverride);
+
+            if (res.status === 401) {
+                clearStoredUser();
+                navigate('/auth');
+                return;
+            }
+
             const data = await res.json();
             if (res.ok) {
-                setNetworkData(data);
+                setNetworkData({
+                    requests: Array.isArray(data.requests) ? data.requests : [],
+                    suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+                    connections: Array.isArray(data.connections) ? data.connections : [],
+                    followers: Array.isArray(data.followers) ? data.followers : [],
+                    following: Array.isArray(data.following) ? data.following : []
+                });
             }
         } catch (error) {
             console.error('Error fetching network data:', error);
@@ -38,11 +69,7 @@ const Network = () => {
 
     const handleAcceptRequest = async (id) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/network/accept/${id}`, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithRetry(`${API_BASE}/api/network/accept/${id}`, { method: 'PUT' });
             if (res.ok) fetchNetworkData();
         } catch (error) {
             console.error('Error accepting request:', error);
@@ -51,11 +78,7 @@ const Network = () => {
 
     const handleDeclineRequest = async (id) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/network/decline/${id}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithRetry(`${API_BASE}/api/network/decline/${id}`, { method: 'DELETE' });
             if (res.ok) fetchNetworkData();
         } catch (error) {
             console.error('Error declining request:', error);
@@ -64,20 +87,22 @@ const Network = () => {
 
     const handleSendRequest = async (id) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/network/request/${id}`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await fetchWithRetry(`${API_BASE}/api/network/request/${id}`, { method: 'POST' });
             if (res.ok) fetchNetworkData();
         } catch (error) {
             console.error('Error sending request:', error);
         }
     };
 
-    const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+    const handleLogout = async () => {
+        try {
+            if (user?.role) {
+                await logoutByRole(user.role);
+            }
+        } catch (error) {
+            // Clear local session even if server logout fails.
+        }
+        clearStoredUser();
         navigate('/auth');
     };
 

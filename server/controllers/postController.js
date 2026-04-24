@@ -1,22 +1,47 @@
 import Notification from '../models/Notification.js';
 import Post from '../models/Post.js';
+import User from '../models/User.js';
+import { createAndEmitNotification } from '../services/realtimeService.js';
 
 // Get Feed (Paginated)
 export const getFeed = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 2;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 25);
     const skip = (page - 1) * limit;
+
+    const currentUser = await User.findById(req.user.userId).select('connections following privacy');
+    const connectionIds = Array.isArray(currentUser?.connections) ? currentUser.connections.map((item) => item.toString()) : [];
+    const followingIds = Array.isArray(currentUser?.following) ? currentUser.following.map((item) => item.toString()) : [];
+    const priorityAuthorIds = Array.from(new Set([req.user.userId, ...connectionIds, ...followingIds]));
 
     const posts = await Post.find({})
       .populate('author', 'name profile.headline')
       .populate('comments.user', 'name')
       .populate('likes', 'name')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+      .lean();
 
-    res.json(posts);
+    const prioritized = posts
+      .filter((post) => {
+        const authorId = String(post.author?._id || post.author);
+        return priorityAuthorIds.includes(authorId) || !currentUser?.privacy || currentUser.privacy.profileVisibility !== 'private';
+      })
+      .sort((left, right) => {
+        const leftAuthor = String(left.author?._id || left.author);
+        const rightAuthor = String(right.author?._id || right.author);
+        const leftPriority = priorityAuthorIds.includes(leftAuthor) ? 1 : 0;
+        const rightPriority = priorityAuthorIds.includes(rightAuthor) ? 1 : 0;
+
+        if (leftPriority !== rightPriority) {
+          return rightPriority - leftPriority;
+        }
+
+        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+      });
+
+    const pagedPosts = prioritized.slice(skip, skip + limit);
+
+    res.json(pagedPosts);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching feed' });
   }
@@ -90,7 +115,7 @@ export const toggleLike = async (req, res) => {
     if (index === -1) {
       post.likes.push(req.user.userId); // Like
       // Notify the author (including self, for easier testing!)
-      await Notification.create({
+      await createAndEmitNotification(Notification, {
         recipient: post.author,
         sender: req.user.userId,
         type: 'like',
@@ -121,7 +146,7 @@ export const addComment = async (req, res) => {
     await post.save();
 
     // Create Notification (including self for easier testing)
-    await Notification.create({
+    await createAndEmitNotification(Notification, {
       recipient: post.author,
       sender: req.user.userId,
       type: 'comment',

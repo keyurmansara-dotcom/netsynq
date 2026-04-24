@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { logoutByRole } from '../api/authClient.js';
+import { clearStoredUser, getStoredUser } from '../api/authStorage.js';
 import Navbar from '../components/Navbar';
+
+const API_BASE = 'http://localhost:5000';
 
 const Notifications = () => {
     const navigate = useNavigate();
@@ -12,26 +16,33 @@ const Notifications = () => {
     const [showModal, setShowModal] = useState(false);
 
     useEffect(() => {
-        const storedToken = localStorage.getItem('token');
-        const storedUser = localStorage.getItem('user');
+        const storedUser = getStoredUser();
         
-        if (!storedToken || !storedUser) {
+        if (!storedUser) {
             navigate('/auth');
         } else {
-            setUser(JSON.parse(storedUser));
+            setUser(storedUser);
         }
     }, [navigate]);
 
     useEffect(() => {
         if (!user) return;
         
-        const token = localStorage.getItem('token');
-        fetch('http://localhost:5000/api/notifications', {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
+        fetch(`${API_BASE}/api/notifications`, {
+            credentials: 'include'
         })
-            .then((res) => res.json())
+            .then(async (res) => {
+                if (res.status === 401) {
+                    clearStoredUser();
+                    navigate('/auth');
+                    return [];
+                }
+                if (!res.ok) {
+                    return [];
+                }
+                const payload = await res.json();
+                return Array.isArray(payload) ? payload : [];
+            })
             .then((data) => {
                 setNotifications(data);
                 setLoading(false);
@@ -40,7 +51,7 @@ const Notifications = () => {
                 console.error(err);
                 setLoading(false);
             });
-    }, [user]);
+    }, [user, navigate]);
 
     const getRelativeTime = (dateString) => {
         const timeValue = new Date(dateString).getTime();
@@ -59,12 +70,9 @@ const Notifications = () => {
 
     const markAsRead = async (id) => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch(`http://localhost:5000/api/notifications/${id}/read`, {
+            const res = await fetch(`${API_BASE}/api/notifications/${id}/read`, {
                 method: 'PUT',
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
+                credentials: 'include'
             });
             if (res.ok) {
                 setNotifications(notifications.map(n => n._id === id ? { ...n, read: true } : n));
@@ -84,12 +92,9 @@ const Notifications = () => {
 
     const markAllAsRead = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:5000/api/notifications/read-all', {
+            const res = await fetch(`${API_BASE}/api/notifications/read-all`, {
                 method: 'PUT',
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
+                credentials: 'include'
             });
             if (res.ok) {
                 setNotifications(notifications.map(n => ({ ...n, read: true })));
@@ -99,19 +104,27 @@ const Notifications = () => {
         }
     };
 
-    const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+    const handleLogout = async () => {
+        try {
+            if (user?.role) {
+                await logoutByRole(user.role);
+            }
+        } catch (error) {
+            // Clear local session state even if server logout request fails.
+        }
+        clearStoredUser();
         navigate('/auth');
     };
 
     if (!user) return <div className="text-center mt-20">Loading...</div>;
 
+    const normalizedNotifications = Array.isArray(notifications) ? notifications : [];
+
     const filteredNotifications = activeTab === 'All' 
-        ? notifications 
+        ? normalizedNotifications 
         : activeTab === 'Jobs' 
-            ? notifications.filter(n => n.type.includes('job'))
-            : notifications.filter(n => !n.type.includes('job'));
+            ? normalizedNotifications.filter(n => (n.type || '').includes('job'))
+            : normalizedNotifications.filter(n => !(n.type || '').includes('job'));
 
     return (
         <div className="min-h-screen bg-[#F3F2EF] w-full flex-1 pb-10">
@@ -137,7 +150,7 @@ const Notifications = () => {
                             {/* Header and Read All action */}
                             <div className="flex justify-between items-center p-4 border-b border-gray-200 bg-gray-50/50">
                                 <h2 className="font-semibold text-gray-800">Notifications</h2>
-                                {notifications.some(n => !n.read) && (
+                                {normalizedNotifications.some(n => !n.read) && (
                                     <button 
                                         onClick={markAllAsRead} 
                                         className="text-sm text-blue-600 font-semibold hover:underline bg-white px-3 py-1 rounded-full border border-blue-600 transition hover:bg-blue-50"
@@ -192,9 +205,12 @@ const Notifications = () => {
                                                     <span className="font-bold text-gray-900 hover:text-blue-600 hover:underline">{notif.sender?.name}</span> 
                                                     {notif.type === 'like' ? ' liked your post.' 
                                                         : notif.type === 'comment' ? ' commented on your post.'
+                                                        : notif.type === 'connection_request' ? ' sent you a connection request.'
+                                                        : notif.type === 'connection_accept' ? ' accepted your connection request.'
                                                         : notif.type === 'job_application' ? ' applied for your job.'
                                                         : notif.type === 'job_alert' ? ' posted a new job.'
                                                         : notif.type === 'job_status_update' ? ` updated your application status to ${notif.message}.`
+                                                        : notif.type === 'message' ? ' sent you a message.'
                                                         : ' interacted with you.'}
                                                 </p>
                                                 {notif.post?.content && (
@@ -202,6 +218,9 @@ const Notifications = () => {
                                                 )}
                                                 {notif.job?.title && (
                                                     <p className="text-sm text-gray-500 line-clamp-1 mt-1 italic break-words whitespace-pre-wrap">{notif.job.title} at {notif.job.company}</p>
+                                                )}
+                                                {notif.type === 'message' && (
+                                                    <p className="text-sm text-gray-500 line-clamp-1 mt-1 italic break-words whitespace-pre-wrap">Open Messaging to reply quickly.</p>
                                                 )}
                                                 <p className="text-xs text-gray-400 mt-2">{getRelativeTime(notif.createdAt)}</p>
                                             </div>
@@ -291,9 +310,12 @@ const Notifications = () => {
                                         <p className="text-sm text-gray-800">
                                             {selectedNotification.type === 'like' ? 'Liked your post' 
                                                 : selectedNotification.type === 'comment' ? 'Commented on your post'
+                                                : selectedNotification.type === 'connection_request' ? 'Sent you a connection request'
+                                                : selectedNotification.type === 'connection_accept' ? 'Accepted your connection request'
                                                 : selectedNotification.type === 'job_application' ? 'Applied for your job'
                                                 : selectedNotification.type === 'job_alert' ? 'Posted a new job'
                                                 : selectedNotification.type === 'job_status_update' ? `Updated your application status to ${selectedNotification.message}`
+                                                : selectedNotification.type === 'message' ? 'Sent you a message'
                                                 : 'Interacted with you'}
                                         </p>
                                     </div>
